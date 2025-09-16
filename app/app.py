@@ -14,6 +14,9 @@ from src.tiling.grid import draw_grid_overlay
 from src.tiling.tile_index import build_tile_index
 from src.mosaic.compose import mosaic_from_uploaded
 from src.metrics.similarity import mse as mse_metric, ssim_rgb as ssim_metric
+from src.config import EXAMPLES_DIR, OUTPUTS_DIR
+from src.io_utils import load_image, save_image_rgb
+from src.preprocessing.color_quantization import quantize as quantize_colors
 
 DEFAULT_TILES_DIR = str(ROOT / "data" / "outputs" / "preprocessed")
 
@@ -42,6 +45,68 @@ def error_heatmap(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         norm = np.zeros_like(diff2, dtype=np.uint8)
     heat_bgr = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
     return cv2.cvtColor(heat_bgr, cv2.COLOR_BGR2RGB)
+
+# --------- upload/process helpers ----------
+def _ensure_dir(p: Path) -> None:
+    p.mkdir(parents=True, exist_ok=True)
+
+def process_uploaded_tiles(
+    files: list,
+    fixed_size: int | None,
+    quant_method: str,
+    kmeans_k: int,
+    median_cut_colors: int,
+):
+    if not files:
+        return "No files provided.", gr.update()
+
+    examples_dir = Path(EXAMPLES_DIR)
+    out_dir = Path(OUTPUTS_DIR) / "preprocessed"
+    _ensure_dir(examples_dir)
+    _ensure_dir(out_dir)
+
+    saved = 0
+    processed = 0
+    for f in files:
+        try:
+            # gr.Files provides dict or path-like; handle both
+            fpath = Path(f.name if hasattr(f, "name") else f)
+            img = load_image(fpath)
+            stem = fpath.stem
+
+            # 1) Save original into examples folder
+            save_image_rgb(examples_dir / fpath.name, img)
+            saved += 1
+
+            base_img = img
+            if fixed_size and int(fixed_size) > 0:
+                N = int(fixed_size)
+                base_img = cv2.resize(base_img, (N, N), interpolation=cv2.INTER_AREA)
+                save_image_rgb(out_dir / f"{stem}_{N}x{N}.jpg", base_img)
+                processed += 1
+
+            # 2) Optional quantization
+            if quant_method and quant_method != "none":
+                qimg = quantize_colors(
+                    base_img,
+                    method=quant_method,
+                    kmeans_k=int(kmeans_k),
+                    median_cut_colors=int(median_cut_colors),
+                )
+                suffix = f"_quant_{quant_method}"
+                if fixed_size and int(fixed_size) > 0:
+                    N = int(fixed_size)
+                    save_image_rgb(out_dir / f"{stem}_{N}x{N}{suffix}.jpg", qimg)
+                else:
+                    save_image_rgb(out_dir / f"{stem}{suffix}.jpg", qimg)
+                processed += 1
+        except Exception as e:
+            # continue on individual failures
+            continue
+
+    summary = f"Saved {saved} originals to examples. Wrote {processed} processed tile(s) to preprocessed."
+    # Switch to Mosaic Builder tab by label after processing
+    return summary, gr.update(value="Mosaic Builder")
 
 # --------- core handlers ----------
 def run_mosaic(
@@ -139,7 +204,34 @@ with gr.Blocks(title="Interactive Image Mosaic") as demo:
             gr.update(visible=show_rgb),
         )
 
-    with gr.Tabs():
+    with gr.Tabs() as tabs:
+        with gr.Tab("Tiles: Upload & Process"):
+            gr.Markdown("### Upload new tile images and preprocess them")
+            with gr.Row():
+                with gr.Column(scale=1, min_width=360):
+                    files = gr.Files(label="Upload images", file_types=["image"], file_count="multiple")
+                    fixed_size = gr.Slider(0, 256, value=32, step=8, label="Fixed resize (px)", info="0 to keep original size")
+                    quant_method = gr.Dropdown(["none", "kmeans", "median_cut"], value="none", label="Color quantization")
+                    with gr.Row():
+                        kmeans_k = gr.Slider(2, 64, value=16, step=1, label="k-means K")
+                        median_cut_colors = gr.Slider(2, 64, value=16, step=1, label="Median cut colors")
+                    run_upload = gr.Button("Process & Continue to Mosaic", variant="primary")
+                with gr.Column(scale=1):
+                    gr.Markdown("""
+                    - Originals are saved to `app/examples`.
+                    - Processed tiles are saved to `data/outputs/preprocessed`.
+                    - If you select a fixed resize, tiles are written as `name_NxN.jpg`.
+                    - If you enable quantization, additional `..._quant_{method}.jpg` files are written.
+                    After processing, you'll be taken to the Mosaic Builder tab.
+                    """)
+                    upload_status = gr.Markdown(visible=True)
+
+            run_upload.click(
+                fn=process_uploaded_tiles,
+                inputs=[files, fixed_size, quant_method, kmeans_k, median_cut_colors],
+                outputs=[upload_status, tabs],
+            )
+
         with gr.Tab("Mosaic Builder"):
             with gr.Row():
                 with gr.Column(scale=1, min_width=320):

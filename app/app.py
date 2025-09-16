@@ -129,27 +129,68 @@ def run_performance(
 
 # --------- UI ----------
 with gr.Blocks(title="Interactive Image Mosaic") as demo:
-    gr.Markdown("## Image Mosaic — Build & Analyze\nUpload an image, map to a tile set, and evaluate quality & speed.")
+    gr.Markdown("## Image Mosaic — Build & Analyze\nA clearer layout with grouped controls and dynamic options.")
+
+    def _toggle_bins(classifier_choice: str):
+        show_luma = classifier_choice == "luma_bins"
+        show_rgb = classifier_choice == "rgb_bins"
+        return (
+            gr.update(visible=show_luma),
+            gr.update(visible=show_rgb),
+        )
 
     with gr.Tabs():
         with gr.Tab("Mosaic Builder"):
             with gr.Row():
-                in_img = gr.Image(type="numpy", label="Upload image")
-                tiles_dir = gr.Textbox(value=DEFAULT_TILES_DIR, label="Tiles folder (quantized 32×32 examples)")
-            with gr.Row():
-                tile_size = gr.Slider(8, 64, value=32, step=8, label="Tile size (px)")
-                metric = gr.Radio(choices=["mean_rgb", "mse"], value="mean_rgb", label="Matching metric")
-                classifier = gr.Radio(choices=["none", "luma_bins", "rgb_bins"], value="luma_bins", label="Classifier")
-            with gr.Row():
-                luma_bins = gr.Slider(2, 16, value=8, step=1, label="Luma bins (if luma_bins)")
-                rgb_bins = gr.Slider(2, 6, value=4, step=1, label="RGB bins per channel (if rgb_bins)")
-                blend = gr.Slider(0.0, 0.6, value=0.0, step=0.05, label="Blend with original")
+                with gr.Column(scale=1, min_width=320):
+                    gr.Markdown("### Inputs")
+                    in_img = gr.Image(type="numpy", label="Upload image")
+                    tiles_dir = gr.Textbox(
+                        value=DEFAULT_TILES_DIR,
+                        label="Tiles folder",
+                        info="Folder containing candidate tile images (.jpg/.png/...)"
+                    )
+                    gr.Markdown("### Controls")
+                    tile_size = gr.Slider(8, 64, value=32, step=8, label="Tile size (px)")
+                    metric = gr.Radio(
+                        choices=["mean_rgb", "mse"], value="mean_rgb", label="Matching metric",
+                        info="mean_rgb = faster, mse = more detailed but slower"
+                    )
+                    classifier = gr.Radio(
+                        choices=["none", "luma_bins", "rgb_bins"], value="luma_bins", label="Classifier",
+                        info="Partition patches and tiles before matching"
+                    )
+                    with gr.Row():
+                        luma_bins = gr.Slider(2, 16, value=8, step=1, label="Luma bins", visible=True)
+                        rgb_bins = gr.Slider(2, 6, value=4, step=1, label="RGB bins per channel", visible=False)
+                    blend = gr.Slider(0.0, 0.6, value=0.0, step=0.05, label="Blend with original",
+                                      info="0 = only tiles, higher = mix original image")
+                    with gr.Accordion("How matching and classification work", open=False):
+                        gr.Markdown(
+                            """
+                            - **Matching metric** decides how the best tile is selected for each image patch:
+                              - **mean_rgb**: compares only the average color (fastest). Good for broad color mapping.
+                              - **mse**: compares full per-pixel content (slower). Picks tiles that better match details.
+                            - **Classifier** restricts which tiles are considered before matching:
+                              - **none**: use all tiles for every patch.
+                              - **luma_bins**: group patches/tiles by brightness; dark areas pick from dark tiles, bright from bright.
+                              - **rgb_bins**: group by coarse RGB color bins; keeps color regions consistent.
+                            - They work together: classification narrows candidates; the metric ranks the candidates to choose the winner.
+                            """
+                        )
+                    run_btn = gr.Button("Generate Mosaic", variant="primary")
+                with gr.Column(scale=2):
+                    gr.Markdown("### Outputs")
+                    with gr.Row():
+                        out1 = gr.Image(type="numpy", label="Original (uploaded)")
+                        out2 = gr.Image(type="numpy", label="Grid Overlay")
+                    out3 = gr.Image(type="numpy", label="Mosaic")
 
-            run_btn = gr.Button("Generate Mosaic")
-
-            out1 = gr.Image(type="numpy", label="Original (uploaded)")
-            out2 = gr.Image(type="numpy", label="Grid Overlay")
-            out3 = gr.Image(type="numpy", label="Mosaic")
+            classifier.change(
+                fn=_toggle_bins,
+                inputs=[classifier],
+                outputs=[luma_bins, rgb_bins],
+            )
 
             run_btn.click(
                 fn=run_mosaic,
@@ -158,27 +199,47 @@ with gr.Blocks(title="Interactive Image Mosaic") as demo:
             )
 
         with gr.Tab("Performance"):
-            gr.Markdown("### Evaluate MSE & SSIM\nWe time the mapping, crop the original to the mosaic’s size, and show an error heatmap.")
+            gr.Markdown("### Evaluate mapping quality and speed")
             with gr.Row():
-                # Reuse the same controls via "mirror" components (independent from first tab)
-                in_img_p = gr.Image(type="numpy", label="Upload image")
-                tiles_dir_p = gr.Textbox(value=DEFAULT_TILES_DIR, label="Tiles folder")
-            with gr.Row():
-                tile_size_p = gr.Slider(8, 64, value=32, step=8, label="Tile size (px)")
-                metric_p = gr.Radio(choices=["mean_rgb", "mse"], value="mean_rgb", label="Matching metric")
-                classifier_p = gr.Radio(choices=["none", "luma_bins", "rgb_bins"], value="luma_bins", label="Classifier")
-            with gr.Row():
-                luma_bins_p = gr.Slider(2, 16, value=8, step=1, label="Luma bins")
-                rgb_bins_p = gr.Slider(2, 6, value=4, step=1, label="RGB bins per channel")
-                blend_p = gr.Slider(0.0, 0.6, value=0.0, step=0.05, label="Blend")
+                with gr.Column(scale=1, min_width=320):
+                    in_img_p = gr.Image(type="numpy", label="Upload image")
+                    tiles_dir_p = gr.Textbox(value=DEFAULT_TILES_DIR, label="Tiles folder")
+                    tile_size_p = gr.Slider(8, 64, value=32, step=8, label="Tile size (px)")
+                    metric_p = gr.Radio(choices=["mean_rgb", "mse"], value="mean_rgb", label="Matching metric")
+                    classifier_p = gr.Radio(choices=["none", "luma_bins", "rgb_bins"], value="luma_bins", label="Classifier")
+                    with gr.Row():
+                        luma_bins_p = gr.Slider(2, 16, value=8, step=1, label="Luma bins", visible=True)
+                        rgb_bins_p = gr.Slider(2, 6, value=4, step=1, label="RGB bins per channel", visible=False)
+                    blend_p = gr.Slider(0.0, 0.6, value=0.0, step=0.05, label="Blend")
+                    with gr.Accordion("How matching and classification work", open=False):
+                        gr.Markdown(
+                            """
+                            - **Matching metric**:
+                              - **mean_rgb**: average color matching (fast).
+                              - **mse**: per-pixel comparison (slower, more detailed).
+                            - **Classifier**:
+                              - **none**: global tile pool.
+                              - **luma_bins**: match within brightness bins.
+                              - **rgb_bins**: match within coarse RGB bins.
+                            - Flow: classify (optional) → match using selected metric.
+                            """
+                        )
+                    run_perf = gr.Button("Run Performance Analysis")
+                with gr.Column(scale=2):
+                    with gr.Row():
+                        orig_cropped = gr.Image(type="numpy", label="Original (center-cropped to mosaic)")
+                        mosaic_img = gr.Image(type="numpy", label="Mosaic")
+                    heat_img = gr.Image(type="numpy", label="Error Heatmap (per-pixel MSE)")
+                    metrics_json = gr.JSON(label="Metrics (MSE, SSIM, runtime, usage)")
 
-            run_perf = gr.Button("Run Performance Analysis")
+            def _toggle_bins_p(classifier_choice: str):
+                return _toggle_bins(classifier_choice)
 
-            orig_cropped = gr.Image(type="numpy", label="Original (center-cropped to mosaic)")
-            mosaic_img = gr.Image(type="numpy", label="Mosaic")
-            heat_img = gr.Image(type="numpy", label="Error Heatmap (per-pixel MSE)")
-
-            metrics_json = gr.JSON(label="Metrics (MSE, SSIM, runtime, usage)")
+            classifier_p.change(
+                fn=_toggle_bins_p,
+                inputs=[classifier_p],
+                outputs=[luma_bins_p, rgb_bins_p],
+            )
 
             run_perf.click(
                 fn=run_performance,

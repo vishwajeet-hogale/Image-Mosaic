@@ -1,6 +1,6 @@
 # Interactive Image Mosaic Generator
 
-Reconstruct any image with a grid of tiny **tiles** (mini-images). The app segments an upload into fixed-size cells (e.g., **32×32**) and replaces each cell with the **best-matching quantized tile**. Includes a Gradio UI with **Performance** and **Benchmark** tabs to evaluate quality (MSE/SSIM) and speed (vectorized vs. loop-based).
+Reconstruct any image with a grid of tiny tiles (mini-images). The app slices an upload into fixed-size cells (e.g., 32×32) and replaces each cell with the best-matching tile from a folder. Includes a Gradio UI with tabs for uploading/processing tiles, building mosaics, and evaluating quality/speed.
 
 > Your folder may be named `image-mosaic` or `image-mosiac` (typo). Commands assume project root.
 
@@ -8,22 +8,19 @@ Reconstruct any image with a grid of tiny **tiles** (mini-images). The app segme
 
 ## ✨ Features
 
-* **Vectorized grid ops** (NumPy reshape/block view — no Python loops).
-* **Tile mapping** via:
-
-  * Mean-RGB distance (fast), or
-  * Patch-wise MSE (crisper but heavier).
-* **Optional pre-classification** of patches & tiles:
-
-  * **Luma bins** (intensity), or
-  * **RGB bins** (e.g., 4×4×4 = 64 classes).
-* **Gradio UI** with tabs:
-
-  * **Mosaic Builder** (Original | Grid | Mosaic)
-  * **Performance** (MSE, SSIM, error heatmap, runtime)
-  * **Benchmark** (runtime vs. tile size; vectorized vs. naive)
-* **Scripts** for preprocessing & benchmarking.
-* **Tests** for grid, matchers, compose, metrics.
+- Vectorized grid operations (NumPy reshape/block view; no Python loops).
+- Tile matching via:
+  - Mean RGB distance (fast), or
+  - Patch-wise MSE (more detailed).
+- Optional pre-classification to preserve local brightness/color:
+  - Luma bins (intensity), or
+  - RGB bins (e.g., 4×4×4 = 64 classes).
+- Gradio UI tabs:
+  - Tiles: Upload & Process (first tab; add tiles with optional fixed resize and quantization)
+  - Mosaic Builder (Original | Grid | Mosaic)
+  - Performance (MSE, SSIM, error heatmap, runtime)
+- Script for preprocessing examples from the CLI.
+- Tests for resize/crop and quantization.
 
 ---
 
@@ -32,23 +29,20 @@ Reconstruct any image with a grid of tiny **tiles** (mini-images). The app segme
 ```
 app/                      # Gradio UI
   app.py
-  examples/
+  examples/               # originals uploaded via UI (tiles source)
 src/                      # Library code
-  preprocessing/          # resize & quantization
+  preprocessing/          # resize & color quantization
   tiling/                 # grid ops, tile index, matchers
-  mosaic/                 # compose (vectorized) & naive reference
-  metrics/                # similarity & runtime helpers
+  mosaic/                 # compose (vectorized)
+  metrics/                # similarity metrics
 data/outputs/             # generated artifacts (gitignored)
-  preprocessed/           # 32x32 quantized tiles from Step 1
-  mosaics/
-  benchmarks/
+  preprocessed/           # processed tiles written by UI / scripts
 scripts/
-  preprocess_examples.py  # Step 1
-  benchmark_runtime.py    # Step 6
+  preprocess_examples.py  # CLI: fixed-size + quantize
 tests/
 reports/
 requirements.txt
-pyproject.toml            # optional (for editable install)
+pyproject.toml            # optional (editable install)
 ```
 
 ---
@@ -79,56 +73,36 @@ Pillow==10.4.0
 
 ---
 
-## 🚀 Quickstart (end-to-end)
+## 🚀 Quickstart
 
-1. **Create a 32×32 quantized tile set** (Step 1)
-
-```bash
-python -m scripts.preprocess_examples --fixed-size 32 --quant kmeans --kmeans-k 16
-# outputs: data/outputs/preprocessed/*_32x32_quant_kmeans.jpg
-```
-
-2. **Launch the app** (Steps 3–6 in UI)
+1) Launch the app
 
 ```bash
 python app/app.py
-# the app is configured to use share=True (for networks that block localhost)
+# launches with share=True in this project for convenience
 ```
 
-3. In the UI:
+2) In the UI
 
-* **Upload** an image
-* Choose **tile size** (default 32), **metric** (mean\_rgb|mse)
-* Optionally enable **classifier** (luma\_bins|rgb\_bins)
-* Adjust **blend** to mix back the original
-* Use **Performance** tab for MSE/SSIM and heatmap
-* Use **Benchmark** tab to compare vectorized vs. naive across tile sizes
+- Go to the tab “Tiles: Upload & Process”.
+  - Upload images to build your tile set.
+  - Optional: set Fixed resize (e.g., 32 or 64). 0 keeps original.
+  - Optional: enable Color quantization (kmeans or median_cut) with parameters.
+  - Click “Process & Continue to Mosaic” → originals save to `app/examples`, processed tiles to `data/outputs/preprocessed`, and you’ll be switched to Mosaic Builder.
+- In “Mosaic Builder”
+  - Upload the image you want to reconstruct.
+  - Tiles folder: point to `data/outputs/preprocessed` (default).
+  - Choose Tile size (px), Matching metric, and Classifier (or none).
+  - Click “Generate Mosaic”.
+- In “Performance”
+  - Run analysis to see MSE, SSIM, error heatmap, and runtime.
 
----
-
-## 📦 Scripts
-
-### Step 1 — Preprocess & Quantize (examples → tiles)
+CLI alternative for preprocessing:
 
 ```bash
 python -m scripts.preprocess_examples --fixed-size 32 --quant kmeans --kmeans-k 16
-# variations:
-#   --quant none
-#   --quant median_cut --median-cut-colors 16
+# writes: data/outputs/preprocessed/*_32x32(_quant_*).jpg
 ```
-
-### Step 6 — Runtime Benchmark (grid sizes & implementations)
-
-```bash
-python -m scripts.benchmark_runtime \
-  --image app/examples/beach.jpg \
-  --tiles data/outputs/preprocessed \
-  --tile-sizes 16 32 64 \
-  --metric mean_rgb \
-  --repeats 3
-```
-
-Outputs CSV to `data/outputs/benchmarks/runtime_bench_mean_rgb.csv`.
 
 ---
 
